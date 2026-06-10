@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: reso-bot
+    runtime: python3.11
+    repo: https://github.com/Kavibalan1904/Reso
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
