@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including libffi for PyNaCl
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     openjdk-21-jre-headless \
     ffmpeg \
@@ -16,15 +16,15 @@ RUN apt-get update && apt-get install -y \
 # Download Lavalink
 RUN wget https://github.com/lavalink-devs/Lavalink/releases/download/4.0.0/Lavalink.jar
 
-# Copy and install Python dependencies
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy bot code
 COPY main.py .
 
-# Create Lavalink configuration
-RUN echo 'server:\n  port: 2333\n  address: 0.0.0.0\nlavalink:\n  server:\n    password: "youshallnotpass"\n    sources:\n      youtube: true\n    youtubeSearchEnabled: true' > application.yml
+# Create Lavalink config
+RUN echo 'server:\n  port: 2333\n  address: 0.0.0.0\nlavalink:\n  server:\n    password: "youshallnotpass"\n    sources:\n      youtube: true\n    youtubeSearchEnabled: true\n    bufferDurationMs: 400\n    frameBufferDurationMs: 5000' > application.yml
 
-# Start Lavalink and then the bot
-CMD java -jar Lavalink.jar & sleep 10 && python main.py
+# Start both services
+CMD java -jar Lavalink.jar & sleep 15 && python main.py
