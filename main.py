@@ -19,20 +19,15 @@ async def on_ready():
     print(f'Connected to {len(bot.guilds)} servers')
     
     # Setup Lavalink
-    retries = 0
-    while retries < 5:
-        try:
-            node = wavelink.Node(
-                uri='http://localhost:2333',
-                password='youshallnotpass'
-            )
-            await wavelink.Pool.connect(client=bot, nodes=[node])
-            print('✅ Connected to Lavalink')
-            break
-        except Exception as e:
-            retries += 1
-            print(f'⚠️ Lavalink connection attempt {retries}/5 failed: {e}')
-            await asyncio.sleep(5)
+    try:
+        node = wavelink.Node(
+            uri='http://localhost:2333',
+            password='youshallnotpass'
+        )
+        await wavelink.Pool.connect(client=bot, nodes=[node])
+        print('✅ Connected to Lavalink')
+    except Exception as e:
+        print(f'⚠️ Lavalink connection failed: {e}')
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -55,7 +50,6 @@ async def join(ctx):
             await channel.connect(self_deaf=True)
         
         await ctx.send(f'✅ Joined {channel.mention} and deafened')
-        print(f'Joined voice channel: {channel.name} (Deafened: True)')
     except Exception as e:
         await ctx.send(f'❌ Failed to join: {str(e)}')
 
@@ -69,13 +63,9 @@ async def play(ctx, *, search: str):
     # Join voice channel if not already in one
     if not ctx.voice_client:
         await ctx.invoke(join)
-        await asyncio.sleep(2)  # Wait for connection
+        await asyncio.sleep(2)
     
     vc = ctx.voice_client
-    
-    # Ensure bot is deafened
-    if not vc.is_deaf():
-        await ctx.guild.change_voice_state(channel=vc.channel, self_deaf=True)
     
     await ctx.send(f'🔍 Searching for: {search}')
     
@@ -96,10 +86,25 @@ async def play(ctx, *, search: str):
         else:
             await vc.play(track)
             await ctx.send(f'🎵 Now playing: **{track.title}**')
+            await ctx.send(f'🔊 Volume is at {vc.volume}% (use !volume 100 to increase)')
             
     except Exception as e:
         await ctx.send(f'❌ Error: {str(e)}')
-        print(f'Play error details: {e}')
+
+@bot.command(name='volume')
+async def volume(ctx, vol: int):
+    if ctx.voice_client:
+        if 0 <= vol <= 150:
+            await ctx.voice_client.set_volume(vol)
+            await ctx.send(f'🔊 Volume set to {vol}%')
+        else:
+            await ctx.send('❌ Volume must be between 0 and 150')
+
+@bot.command(name='stop')
+async def stop(ctx):
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send('🛑 Stopped and left channel')
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -118,66 +123,6 @@ async def skip(ctx):
     if ctx.voice_client and ctx.voice_client.is_playing():
         await ctx.voice_client.stop()
         await ctx.send('⏭️ Skipped')
-
-@bot.command(name='stop')
-async def stop(ctx):
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-        await ctx.send('🛑 Stopped and left channel')
-
-@bot.command(name='volume')
-async def volume(ctx, vol: int):
-    if ctx.voice_client:
-        if 0 <= vol <= 150:
-            await ctx.voice_client.set_volume(vol)
-            await ctx.send(f'🔊 Volume set to {vol}%')
-        else:
-            await ctx.send('❌ Volume must be between 0 and 150')
-
-@bot.command(name='queue')
-async def show_queue(ctx):
-    if not ctx.voice_client:
-        await ctx.send('❌ Not in a voice channel')
-        return
-    
-    vc = ctx.voice_client
-    
-    if not vc.queue:
-        await ctx.send('📭 Queue is empty')
-        return
-    
-    queue_list = list(vc.queue)
-    queue_text = "**Current Queue:**\n"
-    
-    for i, track in enumerate(queue_list[:10], 1):
-        queue_text += f"{i}. {track.title}\n"
-    
-    if len(queue_list) > 10:
-        queue_text += f"\nAnd {len(queue_list) - 10} more..."
-    
-    await ctx.send(queue_text)
-
-@bot.command(name='deafen')
-async def deafen(ctx):
-    """Force bot to deafen itself"""
-    if ctx.voice_client:
-        await ctx.guild.change_voice_state(channel=ctx.voice_client.channel, self_deaf=True)
-        await ctx.send('🔇 Bot is now deafened')
-    else:
-        await ctx.send('❌ Bot is not in a voice channel')
-
-@bot.command(name='node')
-async def node_status(ctx):
-    """Check Lavalink node status"""
-    if not ctx.voice_client:
-        await ctx.send('❌ Bot is not in a voice channel')
-        return
-    
-    vc = ctx.voice_client
-    if vc.node and vc.node.is_connected:
-        await ctx.send('✅ Lavalink node is connected and ready')
-    else:
-        await ctx.send('❌ Lavalink node is not connected')
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
