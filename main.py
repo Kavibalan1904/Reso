@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+import yt_dlp as youtube_dl
 import os
 import asyncio
 from dotenv import load_dotenv
@@ -12,19 +13,26 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# yt-dlp configuration
+ydl_opts = {
+    'format': 'bestaudio/best',
+    'quiet': True,
+    'no_warnings': True,
+    'extract_flat': False,
+    'ignoreerrors': False,
+}
+
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} is online!')
     print(f'Connected to {len(bot.guilds)} servers')
-    
-    # Set bot status
-    await bot.change_presence(activity=discord.Game(name="!join to start"))
+    await bot.change_presence(activity=discord.Game(name="!play | !join"))
 
 @bot.command(name='join')
 async def join(ctx):
-    """Bot joins your voice channel"""
+    """Join your voice channel"""
     if not ctx.author.voice:
-        await ctx.send('❌ You need to be in a voice channel first!')
+        await ctx.send('❌ You must be in a voice channel!')
         return
     
     channel = ctx.author.voice.channel
@@ -33,58 +41,143 @@ async def join(ctx):
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
         else:
-            # Try to connect with timeout
-            await channel.connect(timeout=10.0, reconnect=True, self_deaf=True)
+            await channel.connect(self_deaf=True)
         
-        await ctx.send(f'✅ Connected to **{channel.name}**')
-        
-        # Test if voice is working
-        await asyncio.sleep(2)
-        if ctx.voice_client and ctx.voice_client.is_connected():
-            await ctx.send('🔊 Voice connection established! Try `!play test`')
-        else:
-            await ctx.send('⚠️ Voice connection may be unstable')
-            
-    except asyncio.TimeoutError:
-        await ctx.send('❌ Connection timed out. Please try again.')
-    except discord.Forbidden:
-        await ctx.send('❌ I don\'t have permission to join that voice channel!')
+        await ctx.send(f'✅ Joined **{channel.name}**')
     except Exception as e:
         await ctx.send(f'❌ Error: {str(e)[:100]}')
 
 @bot.command(name='play')
-async def play(ctx, *, song):
-    """Test play command"""
+async def play(ctx, *, query):
+    """Play a song from YouTube"""
+    if not ctx.author.voice:
+        await ctx.send('❌ Join a voice channel first with `!join`')
+        return
+    
     if not ctx.voice_client:
         await ctx.invoke(join)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
     
-    if ctx.voice_client:
-        await ctx.send('🎵 Bot is ready to play music!')
-        await ctx.send('⚠️ Note: YouTube playback requires additional setup.')
-        await ctx.send('💡 Try using a direct MP3 URL or SoundCloud link')
-    else:
-        await ctx.send('❌ Bot is not in a voice channel')
+    await ctx.send(f'🔍 Searching: **{query}**...')
+    
+    try:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            # Search for the song
+            info = ydl.extract_info(f"ytsearch:{query}", download=False)
+            
+            if info and 'entries' in info and len(info['entries']) > 0:
+                video = info['entries'][0]
+                title = video.get('title', 'Unknown')
+                
+                # Get audio URL
+                audio_info = ydl.extract_info(video['webpage_url'], download=False)
+                
+                # Find best audio format
+                audio_url = None
+                if 'url' in audio_info:
+                    audio_url = audio_info['url']
+                elif 'formats' in audio_info:
+                    for f in audio_info['formats']:
+                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+                            audio_url = f.get('url')
+                            break
+                
+                if audio_url:
+                    ffmpeg_opts = {
+                        'before_options': '-reconnect 1 -reconnect_streamed 1',
+                        'options': '-vn'
+                    }
+                    
+                    player = discord.FFmpegPCMAudio(audio_url, **ffmpeg_opts)
+                    volume_player = discord.PCMVolumeTransformer(player, volume=0.5)
+                    
+                    if ctx.voice_client.is_playing():
+                        ctx.voice_client.stop()
+                    
+                    ctx.voice_client.play(volume_player)
+                    await ctx.send(f'🎵 **Now playing:** {title}')
+                    await ctx.send('💡 Use `!volume 100` to increase volume')
+                else:
+                    await ctx.send('❌ Could not extract audio URL')
+            else:
+                await ctx.send('❌ No results found')
+                
+    except Exception as e:
+        await ctx.send(f'❌ Error: {str(e)[:150]}')
+        print(f'Play error: {e}')
 
-@bot.command(name='leave')
-async def leave(ctx):
-    """Bot leaves voice channel"""
+@bot.command(name='volume')
+async def volume(ctx, vol: int = None):
+    """Set or show volume (0-150)"""
+    if not ctx.voice_client or not ctx.voice_client.source:
+        await ctx.send('❌ Nothing is playing')
+        return
+    
+    if vol is None:
+        current = int(ctx.voice_client.source.volume * 100)
+        await ctx.send(f'🔊 Current volume: **{current}%**')
+        return
+    
+    vol = max(0, min(150, vol))
+    ctx.voice_client.source.volume = vol / 100
+    await ctx.send(f'🔊 Volume set to **{vol}%**')
+
+@bot.command(name='pause')
+async def pause(ctx):
+    """Pause current song"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.pause()
+        await ctx.send('⏸️ Paused')
+
+@bot.command(name='resume')
+async def resume(ctx):
+    """Resume current song"""
+    if ctx.voice_client and ctx.voice_client.is_paused():
+        ctx.voice_client.resume()
+        await ctx.send('▶️ Resumed')
+
+@bot.command(name='skip')
+async def skip(ctx):
+    """Skip current song"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        await ctx.send('⏭️ Skipped')
+
+@bot.command(name='stop')
+async def stop(ctx):
+    """Stop and disconnect"""
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-        await ctx.send('👋 Left voice channel')
-    else:
-        await ctx.send('❌ I\'m not in a voice channel!')
+        await ctx.send('🛑 Stopped and disconnected')
 
 @bot.command(name='ping')
 async def ping(ctx):
     """Check bot latency"""
-    await ctx.send(f'🏓 Pong! `{round(bot.latency * 1000)}ms`')
+    await ctx.send(f'🏓 Pong! **{round(bot.latency * 1000)}ms**')
+
+@bot.command(name='helpme')
+async def help_cmd(ctx):
+    """Show all commands"""
+    help_text = """
+    **🎵 Reso Music Bot Commands**
+    
+    `!join` - Bot joins your voice channel
+    `!play [song]` - Play a song from YouTube
+    `!pause` - Pause current song
+    `!resume` - Resume playing
+    `!skip` - Skip current song
+    `!stop` - Stop and disconnect
+    `!volume [1-150]` - Set volume
+    `!volume` - Show current volume
+    `!ping` - Check bot latency
+    """
+    await ctx.send(help_text)
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print('❌ DISCORD_TOKEN not set!')
+        print('❌ DISCORD_TOKEN environment variable not set!')
         exit(1)
     
-    print('Starting bot...')
+    print('Starting Reso bot...')
     bot.run(token)
