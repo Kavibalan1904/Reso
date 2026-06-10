@@ -13,13 +13,7 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# FFmpeg options for stable streaming
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn -bufsize 64k'
-}
-
-# yt-dlp options for best audio quality
+# yt-dlp options
 ydl_opts = {
     'format': 'bestaudio/best',
     'quiet': True,
@@ -27,7 +21,6 @@ ydl_opts = {
     'extract_flat': False,
     'ignoreerrors': True,
     'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
 }
 
 @bot.event
@@ -50,7 +43,7 @@ async def join(ctx):
     else:
         await channel.connect(self_deaf=True)
     
-    await ctx.send(f'✅ Joined {channel.mention} and deafened')
+    await ctx.send(f'✅ Joined {channel.mention}')
 
 @bot.command(name='play')
 async def play(ctx, *, query):
@@ -65,42 +58,58 @@ async def play(ctx, *, query):
     
     # Show typing indicator while searching
     async with ctx.typing():
-        await ctx.send(f'🔍 Searching for: {query}')
+        await ctx.send(f'🔍 Searching: {query}')
         
         try:
             # Use yt-dlp to extract audio URL
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                # Search for the video
-                if not query.startswith('http'):
-                    info = ydl.extract_info(f"ytsearch:{query}", download=False)
-                    if 'entries' in info:
-                        info = info['entries'][0]
-                else:
+                # Search or get direct URL
+                if query.startswith('http://') or query.startswith('https://'):
                     info = ydl.extract_info(query, download=False)
+                else:
+                    # Search for the video
+                    search_results = ydl.extract_info(f"ytsearch:{query}", download=False)
+                    if search_results and 'entries' in search_results and search_results['entries']:
+                        info = search_results['entries'][0]
+                    else:
+                        await ctx.send('❌ No results found!')
+                        return
+                
+                if not info:
+                    await ctx.send('❌ Could not find the song!')
+                    return
                 
                 # Get the best audio URL
-                url = info['url']
+                url = info.get('url', info.get('webpage_url', None))
                 title = info.get('title', 'Unknown Title')
-                duration = info.get('duration', 0)
+                
+                if not url:
+                    await ctx.send('❌ Could not extract audio URL!')
+                    return
                 
                 # Create audio source
+                ffmpeg_options = {
+                    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+                    'options': '-vn'
+                }
+                
                 audio_source = discord.FFmpegPCMAudio(url, **ffmpeg_options)
                 audio = discord.PCMVolumeTransformer(audio_source, volume=0.5)
                 
                 # Play the audio
                 if ctx.voice_client.is_playing():
                     await ctx.send(f'📝 Added to queue: **{title}**')
-                    # Simple queue system
-                    if not hasattr(ctx.voice_client, 'queue'):
-                        ctx.voice_client.queue = []
-                    ctx.voice_client.queue.append(audio)
                 else:
-                    ctx.voice_client.play(audio, after=lambda e: print(f'Finished: {title}') if not e else print(f'Error: {e}'))
+                    def after_play(error):
+                        if error:
+                            print(f'Playback error: {error}')
+                    
+                    ctx.voice_client.play(audio, after=after_play)
                     await ctx.send(f'🎵 Now playing: **{title}**')
                     
         except Exception as e:
             await ctx.send(f'❌ Error: {str(e)}')
-            print(f'Play error: {e}')
+            print(f'Play error details: {e}')
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -118,23 +127,14 @@ async def resume(ctx):
 async def skip(ctx):
     if ctx.voice_client and ctx.voice_client.is_playing():
         ctx.voice_client.stop()
-        
-        # Play next from queue
-        if hasattr(ctx.voice_client, 'queue') and ctx.voice_client.queue:
-            next_track = ctx.voice_client.queue.pop(0)
-            ctx.voice_client.play(next_track)
-            await ctx.send('⏭️ Skipped to next track')
-        else:
-            await ctx.send('⏭️ Skipped')
+        await ctx.send('⏭️ Skipped')
 
 @bot.command(name='stop')
 async def stop(ctx):
     if ctx.voice_client:
         ctx.voice_client.stop()
         await ctx.voice_client.disconnect()
-        if hasattr(ctx.voice_client, 'queue'):
-            ctx.voice_client.queue = []
-        await ctx.send('🛑 Stopped and left channel')
+        await ctx.send('🛑 Stopped')
 
 @bot.command(name='volume')
 async def volume(ctx, vol: int):
@@ -142,17 +142,6 @@ async def volume(ctx, vol: int):
         volume_level = max(0, min(150, vol)) / 100
         ctx.voice_client.source.volume = volume_level
         await ctx.send(f'🔊 Volume set to {vol}%')
-
-@bot.command(name='queue')
-async def show_queue(ctx):
-    if hasattr(ctx.voice_client, 'queue') and ctx.voice_client.queue:
-        queue_list = ctx.voice_client.queue
-        queue_text = "**Queue:**\n"
-        for i, _ in enumerate(queue_list[:10], 1):
-            queue_text += f"{i}. Track {i}\n"
-        await ctx.send(queue_text)
-    else:
-        await ctx.send('📭 Queue is empty')
 
 @bot.command(name='ping')
 async def ping(ctx):
