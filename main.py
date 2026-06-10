@@ -18,12 +18,17 @@ async def on_ready():
     print(f'✅ Reso is online as {bot.user}')
     print(f'Connected to {len(bot.guilds)} servers')
     
+    # Setup Lavalink
     try:
-        node = wavelink.Node(uri='http://localhost:2333', password='youshallnotpass')
+        node = wavelink.Node(
+            uri='http://localhost:2333',
+            password='youshallnotpass'
+        )
         await wavelink.Pool.connect(client=bot, nodes=[node])
         print('✅ Connected to Lavalink')
     except Exception as e:
-        print(f'⚠️ Lavalink error: {e}')
+        print(f'⚠️ Lavalink connection failed: {e}')
+        print('Music commands will not work until Lavalink connects')
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -31,39 +36,67 @@ async def ping(ctx):
 
 @bot.command(name='join')
 async def join(ctx):
+    """Bot joins your voice channel"""
     if not ctx.author.voice:
-        await ctx.send('❌ Join a voice channel first!')
+        await ctx.send('❌ You need to be in a voice channel first!')
         return
+    
     channel = ctx.author.voice.channel
-    if ctx.voice_client:
-        await ctx.voice_client.move_to(channel)
-    else:
-        await channel.connect()
-    await ctx.guild.change_voice_state(channel=channel, self_deaf=True)
-    await ctx.send(f'✅ Joined {channel.name}')
+    
+    try:
+        if ctx.voice_client:
+            await ctx.voice_client.move_to(channel)
+        else:
+            await channel.connect()
+        
+        await ctx.guild.change_voice_state(channel=channel, self_deaf=True)
+        await ctx.send(f'✅ Joined {channel.mention}')
+        print(f'Joined voice channel: {channel.name}')
+    except Exception as e:
+        await ctx.send(f'❌ Failed to join: {str(e)}')
+        print(f'Join error: {e}')
 
 @bot.command(name='play')
 async def play(ctx, *, search: str):
+    """Play a song from YouTube"""
+    # Check if user is in voice channel
+    if not ctx.author.voice:
+        await ctx.send('❌ You need to be in a voice channel first!')
+        return
+    
+    # Join voice channel if not already in one
     if not ctx.voice_client:
         await ctx.invoke(join)
+        await asyncio.sleep(1)  # Wait for connection
     
     vc: wavelink.Player = ctx.voice_client
+    
+    # Check Lavalink connection
+    if not vc.node or not vc.node.is_connected:
+        await ctx.send('❌ Music player is initializing. Please wait 10 seconds and try again.')
+        return
+    
     await ctx.send(f'🔍 Searching for: {search}')
     
     try:
+        # Search for tracks
         tracks = await wavelink.YouTubeTrack.search(search, return_first=True)
+        
         if not tracks:
-            await ctx.send('❌ No results found')
+            await ctx.send('❌ No results found!')
             return
         
+        # Play or queue
         if vc.is_playing():
             await vc.queue.put_wait(tracks)
             await ctx.send(f'📝 Added to queue: **{tracks.title}**')
         else:
             await vc.play(tracks)
             await ctx.send(f'🎵 Now playing: **{tracks.title}**')
+            
     except Exception as e:
-        await ctx.send(f'❌ Error: {str(e)}')
+        await ctx.send(f'❌ Error playing: {str(e)}')
+        print(f'Play error: {e}')
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -91,36 +124,16 @@ async def stop(ctx):
 
 @bot.command(name='volume')
 async def volume(ctx, vol: int):
-    if ctx.voice_client and 0 <= vol <= 150:
-        await ctx.voice_client.set_volume(vol)
-        await ctx.send(f'🔊 Volume set to {vol}%')
-    else:
-        await ctx.send('❌ Volume must be between 0 and 150')
-
-@bot.command(name='queue')
-async def queue(ctx):
-    if not ctx.voice_client:
-        await ctx.send('❌ Not in a voice channel')
-        return
-    
-    vc: wavelink.Player = ctx.voice_client
-    if not vc.queue:
-        await ctx.send('📭 Queue is empty')
-        return
-    
-    queue_list = list(vc.queue)
-    queue_text = "**Current Queue:**\n"
-    for i, track in enumerate(queue_list[:5], 1):
-        queue_text += f"{i}. {track.title}\n"
-    
-    if len(queue_list) > 5:
-        queue_text += f"\nAnd {len(queue_list) - 5} more..."
-    
-    await ctx.send(queue_text)
+    if ctx.voice_client:
+        if 0 <= vol <= 150:
+            await ctx.voice_client.set_volume(vol)
+            await ctx.send(f'🔊 Volume set to {vol}%')
+        else:
+            await ctx.send('❌ Volume must be between 0 and 150')
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print('❌ DISCORD_TOKEN environment variable not set!')
+        print('❌ DISCORD_TOKEN not set!')
         exit(1)
     bot.run(token)
