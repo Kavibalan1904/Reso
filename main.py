@@ -2,8 +2,12 @@ import discord
 from discord.ext import commands
 import wavelink
 import os
+import sys
 import asyncio
 from dotenv import load_dotenv
+
+# Force stdout to flush immediately
+sys.stdout.reconfigure(line_buffering=True)
 
 load_dotenv()
 
@@ -15,8 +19,8 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f'✅ Reso is online as {bot.user}')
-    print(f'Connected to {len(bot.guilds)} servers')
+    print(f'✅ Reso is online as {bot.user}', flush=True)
+    print(f'Connected to {len(bot.guilds)} servers', flush=True)
     
     # Setup Lavalink
     try:
@@ -25,9 +29,9 @@ async def on_ready():
             password='youshallnotpass'
         )
         await wavelink.Pool.connect(client=bot, nodes=[node])
-        print('✅ Connected to Lavalink')
+        print('✅ Connected to Lavalink', flush=True)
     except Exception as e:
-        print(f'⚠️ Lavalink connection failed: {e}')
+        print(f'⚠️ Lavalink connection failed: {e}', flush=True)
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -50,8 +54,10 @@ async def join(ctx):
             await channel.connect(self_deaf=True)
         
         await ctx.send(f'✅ Joined {channel.mention} and deafened')
+        print(f'Joined voice channel: {channel.name}', flush=True)
     except Exception as e:
         await ctx.send(f'❌ Failed to join: {str(e)}')
+        print(f'Join error: {e}', flush=True)
 
 @bot.command(name='play')
 async def play(ctx, *, search: str):
@@ -68,6 +74,7 @@ async def play(ctx, *, search: str):
     vc = ctx.voice_client
     
     await ctx.send(f'🔍 Searching for: {search}')
+    print(f'Searching for: {search}', flush=True)
     
     try:
         # Search for tracks
@@ -79,6 +86,7 @@ async def play(ctx, *, search: str):
         
         # Get the first track
         track = tracks[0] if isinstance(tracks, list) else tracks
+        print(f'Found track: {track.title}', flush=True)
         
         if vc.is_playing():
             await vc.queue.put_wait(track)
@@ -86,10 +94,12 @@ async def play(ctx, *, search: str):
         else:
             await vc.play(track)
             await ctx.send(f'🎵 Now playing: **{track.title}**')
-            await ctx.send(f'🔊 Volume is at {vc.volume}% (use !volume 100 to increase)')
+            await ctx.send(f'🔊 Current volume: {vc.volume}% (use !volume 100 to increase)')
+            print(f'Now playing: {track.title}', flush=True)
             
     except Exception as e:
         await ctx.send(f'❌ Error: {str(e)}')
+        print(f'Play error: {e}', flush=True)
 
 @bot.command(name='volume')
 async def volume(ctx, vol: int):
@@ -97,6 +107,7 @@ async def volume(ctx, vol: int):
         if 0 <= vol <= 150:
             await ctx.voice_client.set_volume(vol)
             await ctx.send(f'🔊 Volume set to {vol}%')
+            print(f'Volume set to {vol}%', flush=True)
         else:
             await ctx.send('❌ Volume must be between 0 and 150')
 
@@ -105,6 +116,7 @@ async def stop(ctx):
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send('🛑 Stopped and left channel')
+        print('Stopped and left channel', flush=True)
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -124,9 +136,15 @@ async def skip(ctx):
         await ctx.voice_client.stop()
         await ctx.send('⏭️ Skipped')
 
+@bot.command(name='test')
+async def test(ctx):
+    """Test if bot is responding"""
+    await ctx.send('✅ Bot is working! Try !join then !play songname')
+
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print('❌ DISCORD_TOKEN not set!')
+        print('❌ DISCORD_TOKEN not set!', flush=True)
         exit(1)
+    print('Starting bot...', flush=True)
     bot.run(token)
