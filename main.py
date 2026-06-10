@@ -18,7 +18,10 @@ async def on_ready():
     print(f'✅ Reso is online as {bot.user}')
     
     try:
-        node = wavelink.Node(uri='http://localhost:2333', password='youshallnotpass')
+        node = wavelink.Node(
+            uri='http://localhost:2333',
+            password='youshallnotpass'
+        )
         await wavelink.Pool.connect(client=bot, nodes=[node])
         print('✅ Connected to Lavalink')
     except Exception as e:
@@ -56,12 +59,14 @@ async def play(ctx, *, search: str):
     await ctx.send(f'Searching for: {search}')
     
     try:
-        tracks = await wavelink.Playable.search(search)
+        # Try YouTube search
+        tracks = await wavelink.YouTubeTrack.search(search)
+        
         if not tracks:
-            await ctx.send('No results found!')
+            await ctx.send('No results found! Try a different search term.')
             return
         
-        track = tracks[0] if isinstance(tracks, list) else tracks
+        track = tracks[0]
         
         if vc.is_playing():
             await vc.queue.put_wait(track)
@@ -73,6 +78,7 @@ async def play(ctx, *, search: str):
             
     except Exception as e:
         await ctx.send(f'Error: {str(e)}')
+        await ctx.send('Try using a YouTube URL instead: !play https://youtube.com/watch?v=...')
 
 @bot.command(name='volume')
 async def volume(ctx, vol: int):
