@@ -13,13 +13,11 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# yt-dlp configuration
+# yt-dlp options
 ydl_opts = {
     'format': 'bestaudio/best',
     'quiet': True,
     'no_warnings': True,
-    'extract_flat': False,
-    'ignoreerrors': False,
 }
 
 @bot.event
@@ -44,11 +42,13 @@ async def join(ctx):
             await channel.connect(self_deaf=True)
         
         await ctx.send(f'✅ Joined **{channel.name}**')
+        print(f'Joined voice channel: {channel.name}')
     except Exception as e:
-        await ctx.send(f'❌ Error: {str(e)[:100]}')
+        await ctx.send(f'❌ Failed to join: {str(e)[:100]}')
+        print(f'Join error: {e}')
 
 @bot.command(name='play')
-async def play(ctx, *, query):
+async def play(ctx, *, song):
     """Play a song from YouTube"""
     if not ctx.author.voice:
         await ctx.send('❌ Join a voice channel first with `!join`')
@@ -56,39 +56,35 @@ async def play(ctx, *, query):
     
     if not ctx.voice_client:
         await ctx.invoke(join)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
     
-    await ctx.send(f'🔍 Searching: **{query}**...')
+    await ctx.send(f'🔍 Searching for **{song}**...')
     
     try:
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
             # Search for the song
-            info = ydl.extract_info(f"ytsearch:{query}", download=False)
+            info = ydl.extract_info(f"ytsearch:{song}", download=False)
             
             if info and 'entries' in info and len(info['entries']) > 0:
                 video = info['entries'][0]
                 title = video.get('title', 'Unknown')
+                url = video.get('webpage_url')
                 
-                # Get audio URL
-                audio_info = ydl.extract_info(video['webpage_url'], download=False)
+                # Get the actual audio URL
+                audio_info = ydl.extract_info(url, download=False)
                 
-                # Find best audio format
-                audio_url = None
-                if 'url' in audio_info:
-                    audio_url = audio_info['url']
-                elif 'formats' in audio_info:
+                # Get audio stream URL
+                audio_url = audio_info.get('url')
+                if not audio_url and 'formats' in audio_info:
                     for f in audio_info['formats']:
-                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none':
+                        if f.get('acodec') != 'none':
                             audio_url = f.get('url')
                             break
                 
                 if audio_url:
-                    ffmpeg_opts = {
-                        'before_options': '-reconnect 1 -reconnect_streamed 1',
-                        'options': '-vn'
-                    }
-                    
-                    player = discord.FFmpegPCMAudio(audio_url, **ffmpeg_opts)
+                    # Play the audio
+                    ffmpeg_options = {'options': '-vn'}
+                    player = discord.FFmpegPCMAudio(audio_url, **ffmpeg_options)
                     volume_player = discord.PCMVolumeTransformer(player, volume=0.5)
                     
                     if ctx.voice_client.is_playing():
@@ -96,21 +92,21 @@ async def play(ctx, *, query):
                     
                     ctx.voice_client.play(volume_player)
                     await ctx.send(f'🎵 **Now playing:** {title}')
-                    await ctx.send('💡 Use `!volume 100` to increase volume')
+                    await ctx.send('💡 Tip: Use `!volume 100` for max volume')
                 else:
-                    await ctx.send('❌ Could not extract audio URL')
+                    await ctx.send('❌ Could not get audio stream')
             else:
-                await ctx.send('❌ No results found')
+                await ctx.send('❌ No results found. Try a different song name.')
                 
     except Exception as e:
         await ctx.send(f'❌ Error: {str(e)[:150]}')
-        print(f'Play error: {e}')
+        print(f'Play error details: {e}')
 
 @bot.command(name='volume')
 async def volume(ctx, vol: int = None):
-    """Set or show volume (0-150)"""
+    """Set volume (0-150) or show current"""
     if not ctx.voice_client or not ctx.voice_client.source:
-        await ctx.send('❌ Nothing is playing')
+        await ctx.send('❌ Nothing is playing right now')
         return
     
     if vol is None:
@@ -145,33 +141,27 @@ async def skip(ctx):
 
 @bot.command(name='stop')
 async def stop(ctx):
-    """Stop and disconnect"""
+    """Stop and leave voice channel"""
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-        await ctx.send('🛑 Stopped and disconnected')
+        await ctx.send('🛑 Stopped and left the voice channel')
 
 @bot.command(name='ping')
 async def ping(ctx):
-    """Check bot latency"""
+    """Check bot response time"""
     await ctx.send(f'🏓 Pong! **{round(bot.latency * 1000)}ms**')
 
-@bot.command(name='helpme')
-async def help_cmd(ctx):
-    """Show all commands"""
-    help_text = """
-    **🎵 Reso Music Bot Commands**
-    
-    `!join` - Bot joins your voice channel
-    `!play [song]` - Play a song from YouTube
-    `!pause` - Pause current song
-    `!resume` - Resume playing
-    `!skip` - Skip current song
-    `!stop` - Stop and disconnect
-    `!volume [1-150]` - Set volume
-    `!volume` - Show current volume
-    `!ping` - Check bot latency
-    """
-    await ctx.send(help_text)
+@bot.command(name='info')
+async def info(ctx):
+    """Show bot information"""
+    embed = discord.Embed(
+        title="🎵 Reso Music Bot",
+        description="Your personal music bot for Discord!",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Commands", value="`!join`, `!play`, `!pause`, `!resume`, `!skip`, `!stop`, `!volume`, `!ping`", inline=False)
+    embed.add_field(name="Example", value="`!play despacito`", inline=False)
+    await ctx.send(embed=embed)
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
