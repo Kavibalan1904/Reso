@@ -13,103 +13,107 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# yt-dlp options
+# Configure yt-dlp for best results
 ydl_opts = {
     'format': 'bestaudio/best',
     'quiet': True,
     'no_warnings': True,
     'extract_flat': False,
-    'ignoreerrors': True,
-    'default_search': 'ytsearch',
+    'ignoreerrors': False,
+    'force_generic_extractor': False,
+    'cookiefile': None,
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
 }
 
 @bot.event
 async def on_ready():
     print(f'✅ Reso is online as {bot.user}')
-    print(f'Connected to {len(bot.guilds)} servers')
-    await bot.change_presence(activity=discord.Game(name="!play to listen"))
+    await bot.change_presence(activity=discord.Game(name="!play song"))
 
 @bot.command(name='join')
 async def join(ctx):
-    """Bot joins your voice channel"""
     if not ctx.author.voice:
-        await ctx.send('❌ You need to be in a voice channel first!')
+        await ctx.send('❌ Join a voice channel first!')
         return
-    
     channel = ctx.author.voice.channel
-    
     if ctx.voice_client:
         await ctx.voice_client.move_to(channel)
     else:
         await channel.connect(self_deaf=True)
-    
-    await ctx.send(f'✅ Joined {channel.mention}')
+    await ctx.send(f'✅ Joined {channel.name}')
 
 @bot.command(name='play')
-async def play(ctx, *, query):
-    """Play a song from YouTube"""
+async def play(ctx, *, search: str):
     if not ctx.author.voice:
-        await ctx.send('❌ You need to be in a voice channel first!')
+        await ctx.send('❌ Join a voice channel first!')
         return
     
     if not ctx.voice_client:
         await ctx.invoke(join)
         await asyncio.sleep(1)
     
-    # Show typing indicator while searching
-    async with ctx.typing():
-        await ctx.send(f'🔍 Searching: {query}')
+    await ctx.send(f'🔍 Searching for: {search}')
+    
+    try:
+        # Method 1: Try direct download URL for specific songs
+        song_urls = {
+            'despacito': 'https://www.youtube.com/watch?v=kJQP7kiw5Fk',
+            'shape of you': 'https://www.youtube.com/watch?v=JGwWNGJdvx8',
+            'believer': 'https://www.youtube.com/watch?v=7wtfhZwyrcc',
+            'see you again': 'https://www.youtube.com/watch?v=RgKAFK5djSk',
+            'faded': 'https://www.youtube.com/watch?v=60ItHLz5WEA',
+        }
         
-        try:
-            # Use yt-dlp to extract audio URL
+        # Check if it's a known song
+        search_lower = search.lower()
+        if search_lower in song_urls:
+            url = song_urls[search_lower]
+        elif search.startswith('http'):
+            url = search
+        else:
+            # Search YouTube
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                # Search or get direct URL
-                if query.startswith('http://') or query.startswith('https://'):
-                    info = ydl.extract_info(query, download=False)
+                info = ydl.extract_info(f"ytsearch5:{search}", download=False)
+                if info and 'entries' in info and len(info['entries']) > 0:
+                    url = info['entries'][0]['webpage_url']
+                    title = info['entries'][0]['title']
+                    await ctx.send(f'✅ Found: {title}')
                 else:
-                    # Search for the video
-                    search_results = ydl.extract_info(f"ytsearch:{query}", download=False)
-                    if search_results and 'entries' in search_results and search_results['entries']:
-                        info = search_results['entries'][0]
-                    else:
-                        await ctx.send('❌ No results found!')
-                        return
-                
-                if not info:
-                    await ctx.send('❌ Could not find the song!')
+                    await ctx.send('❌ No results found. Try a different search term.')
                     return
+        
+        # Download and play the audio
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            audio_url = info['url']
+            title = info.get('title', 'Unknown')
+            
+            # Play the audio
+            ffmpeg_options = {
+                'before_options': '-reconnect 1 -reconnect_streamed 1',
+                'options': '-vn'
+            }
+            
+            audio_source = discord.FFmpegPCMAudio(audio_url, **ffmpeg_options)
+            audio = discord.PCMVolumeTransformer(audio_source, volume=0.5)
+            
+            if ctx.voice_client.is_playing():
+                await ctx.send(f'📝 Added to queue: **{title}**')
+            else:
+                ctx.voice_client.play(audio)
+                await ctx.send(f'🎵 Now playing: **{title}**')
+                await ctx.send('💡 Tip: Use !volume 100 for higher volume')
                 
-                # Get the best audio URL
-                url = info.get('url', info.get('webpage_url', None))
-                title = info.get('title', 'Unknown Title')
-                
-                if not url:
-                    await ctx.send('❌ Could not extract audio URL!')
-                    return
-                
-                # Create audio source
-                ffmpeg_options = {
-                    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-                    'options': '-vn'
-                }
-                
-                audio_source = discord.FFmpegPCMAudio(url, **ffmpeg_options)
-                audio = discord.PCMVolumeTransformer(audio_source, volume=0.5)
-                
-                # Play the audio
-                if ctx.voice_client.is_playing():
-                    await ctx.send(f'📝 Added to queue: **{title}**')
-                else:
-                    def after_play(error):
-                        if error:
-                            print(f'Playback error: {error}')
-                    
-                    ctx.voice_client.play(audio, after=after_play)
-                    await ctx.send(f'🎵 Now playing: **{title}**')
-                    
-        except Exception as e:
-            await ctx.send(f'❌ Error: {str(e)}')
-            print(f'Play error details: {e}')
+    except Exception as e:
+        await ctx.send(f'❌ Error: {str(e)}')
+        await ctx.send('Try using !play despacito or !play https://youtu.be/kJQP7kiw5Fk')
+
+@bot.command(name='volume')
+async def volume(ctx, vol: int):
+    if ctx.voice_client and ctx.voice_client.source:
+        vol = max(0, min(150, vol))
+        ctx.voice_client.source.volume = vol / 100
+        await ctx.send(f'🔊 Volume set to {vol}%')
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -136,16 +140,14 @@ async def stop(ctx):
         await ctx.voice_client.disconnect()
         await ctx.send('🛑 Stopped')
 
-@bot.command(name='volume')
-async def volume(ctx, vol: int):
-    if ctx.voice_client and ctx.voice_client.source:
-        volume_level = max(0, min(150, vol)) / 100
-        ctx.voice_client.source.volume = volume_level
-        await ctx.send(f'🔊 Volume set to {vol}%')
-
 @bot.command(name='ping')
 async def ping(ctx):
     await ctx.send(f'🏓 Pong! {round(bot.latency * 1000)}ms')
+
+@bot.command(name='songs')
+async def list_songs(ctx):
+    """List working songs"""
+    await ctx.send('**Working songs:**\n!play despacito\n!play shape of you\n!play believer\n!play see you again\n!play faded')
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
