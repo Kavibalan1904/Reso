@@ -19,15 +19,20 @@ async def on_ready():
     print(f'Connected to {len(bot.guilds)} servers')
     
     # Setup Lavalink
-    try:
-        node = wavelink.Node(
-            uri='http://localhost:2333',
-            password='youshallnotpass'
-        )
-        await wavelink.Pool.connect(client=bot, nodes=[node])
-        print('✅ Connected to Lavalink')
-    except Exception as e:
-        print(f'⚠️ Lavalink connection failed: {e}')
+    retries = 0
+    while retries < 5:
+        try:
+            node = wavelink.Node(
+                uri='http://localhost:2333',
+                password='youshallnotpass'
+            )
+            await wavelink.Pool.connect(client=bot, nodes=[node])
+            print('✅ Connected to Lavalink')
+            break
+        except Exception as e:
+            retries += 1
+            print(f'⚠️ Lavalink connection attempt {retries}/5 failed: {e}')
+            await asyncio.sleep(5)
 
 @bot.command(name='ping')
 async def ping(ctx):
@@ -35,7 +40,7 @@ async def ping(ctx):
 
 @bot.command(name='join')
 async def join(ctx):
-    """Bot joins your voice channel"""
+    """Bot joins your voice channel and deafens itself"""
     if not ctx.author.voice:
         await ctx.send('❌ You need to be in a voice channel first!')
         return
@@ -46,10 +51,11 @@ async def join(ctx):
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
         else:
-            await channel.connect()
+            # Connect with self_deaf=True
+            await channel.connect(self_deaf=True)
         
-        await ctx.guild.change_voice_state(channel=channel, self_deaf=True)
-        await ctx.send(f'✅ Joined {channel.mention}')
+        await ctx.send(f'✅ Joined {channel.mention} and deafened')
+        print(f'Joined voice channel: {channel.name} (Deafened: True)')
     except Exception as e:
         await ctx.send(f'❌ Failed to join: {str(e)}')
 
@@ -60,16 +66,21 @@ async def play(ctx, *, search: str):
         await ctx.send('❌ You need to be in a voice channel first!')
         return
     
+    # Join voice channel if not already in one
     if not ctx.voice_client:
         await ctx.invoke(join)
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)  # Wait for connection
     
-    vc: wavelink.Player = ctx.voice_client
+    vc = ctx.voice_client
+    
+    # Ensure bot is deafened
+    if not vc.is_deaf():
+        await ctx.guild.change_voice_state(channel=vc.channel, self_deaf=True)
     
     await ctx.send(f'🔍 Searching for: {search}')
     
     try:
-        # Correct way to search in Wavelink 3.x
+        # Search for tracks
         tracks = await wavelink.Playable.search(search)
         
         if not tracks:
@@ -88,7 +99,7 @@ async def play(ctx, *, search: str):
             
     except Exception as e:
         await ctx.send(f'❌ Error: {str(e)}')
-        print(f'Play error: {e}')
+        print(f'Play error details: {e}')
 
 @bot.command(name='pause')
 async def pause(ctx):
@@ -129,7 +140,7 @@ async def show_queue(ctx):
         await ctx.send('❌ Not in a voice channel')
         return
     
-    vc: wavelink.Player = ctx.voice_client
+    vc = ctx.voice_client
     
     if not vc.queue:
         await ctx.send('📭 Queue is empty')
@@ -146,29 +157,27 @@ async def show_queue(ctx):
     
     await ctx.send(queue_text)
 
-@bot.command(name='eq')
-async def equalizer(ctx, preset: str = None):
+@bot.command(name='deafen')
+async def deafen(ctx):
+    """Force bot to deafen itself"""
+    if ctx.voice_client:
+        await ctx.guild.change_voice_state(channel=ctx.voice_client.channel, self_deaf=True)
+        await ctx.send('🔇 Bot is now deafened')
+    else:
+        await ctx.send('❌ Bot is not in a voice channel')
+
+@bot.command(name='node')
+async def node_status(ctx):
+    """Check Lavalink node status"""
     if not ctx.voice_client:
         await ctx.send('❌ Bot is not in a voice channel')
         return
     
-    vc: wavelink.Player = ctx.voice_client
-    
-    presets = {
-        'bass': [(0, 0.2), (1, 0.3), (2, 0.1)],
-        'nightcore': [(0, 0.3), (1, 0.2)],
-        'classical': [(0, 0.1), (1, -0.1)],
-        'pop': [(0, 0.1), (1, 0.1), (2, 0.1)],
-        'dance': [(0, 0.2), (1, 0.3), (2, 0.1)],
-        'reset': []
-    }
-    
-    if not preset or preset not in presets:
-        await ctx.send(f'🎛️ Available presets: {", ".join(presets.keys())}')
-        return
-    
-    await vc.set_filter(wavelink.Filter(equalizer=wavelink.Equalizer(levels=presets[preset])))
-    await ctx.send(f'✅ Equalizer set to **{preset}**')
+    vc = ctx.voice_client
+    if vc.node and vc.node.is_connected:
+        await ctx.send('✅ Lavalink node is connected and ready')
+    else:
+        await ctx.send('❌ Lavalink node is not connected')
 
 if __name__ == '__main__':
     token = os.getenv('DISCORD_TOKEN')
